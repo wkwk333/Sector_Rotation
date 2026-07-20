@@ -1,7 +1,7 @@
 name: Publish dashboard
 
-# フェーズ0: まずは手動実行のみ。CI上でパイプラインが問題なく動くことを
-# 確認できたら、フェーズ1で schedule トリガーと公開処理(GitHub Pages)を追加する。
+# Phase 0: manual trigger only for now. Once verified, phase 1 adds a
+# schedule trigger and publishing to GitHub Pages.
 on:
   workflow_dispatch:
 
