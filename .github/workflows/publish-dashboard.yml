@@ -17,6 +17,14 @@ jobs:
         with:
           python-version: "3.11"
 
+      # ubuntu-latest has no Japanese-capable font installed by default.
+      # Without this, all Japanese text in the charts renders as tofu boxes.
+      - name: Install Japanese font
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
+          fc-cache -f
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
