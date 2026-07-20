@@ -1,0 +1,14 @@
+# 仮想環境
+venv/
+
+# PyInstaller ビルド成果物
+build/
+dist/
+*.spec
+
+# Python キャッシュ
+__pycache__/
+*.pyc
+
+# 実行結果 (日次CSV・グラフ・ダッシュボード画像。再実行すればいつでも再生成できる)
+output/
