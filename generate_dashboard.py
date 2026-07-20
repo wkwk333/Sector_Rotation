@@ -16,7 +16,10 @@ sector_rotation_monitor.py が output/ に出力した各指標の最新日次CS
     python generate_dashboard.py
 
 出力:
-    ./output/sector_rotation_dashboard_YYYYMMDD.png
+    ./output/sector_rotation_dashboard_YYYYMMDD.png         (PC/exe向け、横長3列)
+    ./output/sector_rotation_dashboard_mobile_YYYYMMDD.png  (Androidアプリ向け、縦長1列)
+
+どちらも内容(各パネルの意味・判定ロジック)は同一で、レイアウトのみが異なります。
 """
 
 import console_utf8  # noqa: F401  (文字化け対策。最初にimportする)
@@ -225,6 +228,92 @@ def plot_vix_panel(ax, indicator: dict, df: pd.DataFrame):
         label.set_ha("right")
 
 
+def draw_banner(ax_banner, regime, regime_color, stress_count, flags, latest_date, flagged_pairs, fontsizes):
+    """
+    総合判定バナーを描く (縦積みレイアウトで文字被りを回避)。
+    fontsizes: {"title", "regime", "detail", "flagged"} を指定する dict。
+    figsize (図の横幅) に応じて呼び出し側で調整する。
+    """
+    ax_banner.axis("off")
+    flag_text = " / ".join(f"{k}: {'○' if v else '-'}" for k, v in flags.items())
+
+    ax_banner.text(0.0, 0.93, "米国株 資金ローテーション ダッシュボード",
+                   fontsize=fontsizes["title"], weight="bold",
+                   transform=ax_banner.transAxes, va="top")
+    ax_banner.text(0.0, 0.68, f"総合判定: {regime}",
+                   fontsize=fontsizes["regime"], weight="bold", color=regime_color,
+                   transform=ax_banner.transAxes, va="top")
+    ax_banner.text(0.0, 0.48, f"データ基準日: {latest_date}",
+                   fontsize=fontsizes["detail"], color="#555555",
+                   transform=ax_banner.transAxes, va="top")
+    ax_banner.text(0.0, 0.36, f"悪化シグナル {stress_count}/4 個該当  ({flag_text})",
+                   fontsize=fontsizes["detail"], color="#555555",
+                   transform=ax_banner.transAxes, va="top")
+    if flagged_pairs:
+        flagged_text = " / ".join(f"{v['label']} ({v['days_since']}営業日前)" for v in flagged_pairs)
+        ax_banner.text(0.0, 0.18, f"転換直後・要確認 (直近{CONFIRM_WINDOW_DAYS}営業日以内にシグナル転換): {flagged_text}",
+                       fontsize=fontsizes["flagged"], weight="bold", color=STATUS_COLOR["warning"],
+                       transform=ax_banner.transAxes, va="top")
+    ax_banner.axhline(0.03, color="#DDDDDD", lw=1)
+
+
+def build_dashboard_figure(pairs, vix_indicator, pair_dfs, vix_df,
+                            regime, regime_color, stress_count, flags, flagged_pairs):
+    """PC/exe向け: 横長3列レイアウト。"""
+    n_panels = len(pairs) + 1  # + VIX
+    ncols = 3
+    nrows = -(-n_panels // ncols)  # ceil
+
+    banner_height = 1.3 if flagged_pairs else 1.1
+    fig = plt.figure(figsize=(15, 4.2 * nrows + (2.2 if flagged_pairs else 2.0)))
+    gs = fig.add_gridspec(nrows + 1, ncols, height_ratios=[banner_height] + [1] * nrows,
+                          hspace=0.75, wspace=0.35)
+
+    ax_banner = fig.add_subplot(gs[0, :])
+    latest_date = max(df.index.max() for df in pair_dfs.values()).strftime("%Y-%m-%d")
+    draw_banner(ax_banner, regime, regime_color, stress_count, flags, latest_date, flagged_pairs,
+                fontsizes={"title": 17, "regime": 13, "detail": 9.5, "flagged": 9.5})
+
+    panel_specs = [("pair", p) for p in pairs] + [("vix", vix_indicator)]
+    for i, (kind, spec) in enumerate(panel_specs):
+        row, col = divmod(i, ncols)
+        ax = fig.add_subplot(gs[row + 1, col])
+        if kind == "pair":
+            plot_pair_panel(ax, spec, pair_dfs[spec["name"]])
+        else:
+            plot_vix_panel(ax, spec, vix_df)
+
+    return fig
+
+
+def build_mobile_dashboard_figure(pairs, vix_indicator, pair_dfs, vix_df,
+                                   regime, regime_color, stress_count, flags, flagged_pairs):
+    """Androidアプリ向け: 縦長1列レイアウト (スマホの画面比率に近づける)。"""
+    n_panels = len(pairs) + 1  # + VIX
+    ncols = 1
+    nrows = n_panels
+
+    banner_height = 0.85 if flagged_pairs else 0.7
+    fig = plt.figure(figsize=(9, 3.4 * nrows + banner_height))
+    gs = fig.add_gridspec(nrows + 1, ncols, height_ratios=[banner_height] + [1] * nrows,
+                          hspace=0.85)
+
+    ax_banner = fig.add_subplot(gs[0, :])
+    latest_date = max(df.index.max() for df in pair_dfs.values()).strftime("%Y-%m-%d")
+    draw_banner(ax_banner, regime, regime_color, stress_count, flags, latest_date, flagged_pairs,
+                fontsizes={"title": 13, "regime": 10.5, "detail": 8, "flagged": 8})
+
+    panel_specs = [("pair", p) for p in pairs] + [("vix", vix_indicator)]
+    for i, (kind, spec) in enumerate(panel_specs):
+        ax = fig.add_subplot(gs[i + 1, 0])
+        if kind == "pair":
+            plot_pair_panel(ax, spec, pair_dfs[spec["name"]])
+        else:
+            plot_vix_panel(ax, spec, vix_df)
+
+    return fig
+
+
 def main():
     try:
         pairs = CONFIG["pairs"]
@@ -239,10 +328,6 @@ def main():
         regime, regime_status, stress_count, flags = compute_regime(pair_last, vix_last_zone)
         regime_color = STATUS_COLOR[regime_status]
 
-        n_panels = len(pairs) + 1  # + VIX
-        ncols = 3
-        nrows = -(-n_panels // ncols)  # ceil
-
         # 各ペアの「転換直後・要確認」判定はパネル描画時に確定するが、
         # バナーの高さを事前に決めるため、ここで先に計算しておく。
         pair_flags = {}
@@ -255,48 +340,24 @@ def main():
             }
         flagged_pairs = [v for v in pair_flags.values() if v["flagged"]]
 
-        banner_height = 1.3 if flagged_pairs else 1.1
-        fig = plt.figure(figsize=(15, 4.2 * nrows + (2.2 if flagged_pairs else 2.0)))
-        gs = fig.add_gridspec(nrows + 1, ncols, height_ratios=[banner_height] + [1] * nrows,
-                              hspace=0.75, wspace=0.35)
-
-        # --- 総合判定バナー (縦積みレイアウトで文字被りを回避) ---
-        ax_banner = fig.add_subplot(gs[0, :])
-        ax_banner.axis("off")
-        latest_date = max(df.index.max() for df in pair_dfs.values()).strftime("%Y-%m-%d")
-        flag_text = " / ".join(f"{k}: {'○' if v else '-'}" for k, v in flags.items())
-
-        ax_banner.text(0.0, 0.93, "米国株 資金ローテーション ダッシュボード", fontsize=17, weight="bold",
-                       transform=ax_banner.transAxes, va="top")
-        ax_banner.text(0.0, 0.68, f"総合判定: {regime}", fontsize=13, weight="bold", color=regime_color,
-                       transform=ax_banner.transAxes, va="top")
-        ax_banner.text(0.0, 0.48, f"データ基準日: {latest_date}    |    悪化シグナル {stress_count}/4 個該当  ({flag_text})",
-                       fontsize=9.5, color="#555555", transform=ax_banner.transAxes, va="top")
-        if flagged_pairs:
-            flagged_text = " / ".join(f"{v['label']} ({v['days_since']}営業日前)" for v in flagged_pairs)
-            ax_banner.text(0.0, 0.28, f"転換直後・要確認 (直近{CONFIRM_WINDOW_DAYS}営業日以内にシグナル転換): {flagged_text}",
-                           fontsize=9.5, weight="bold", color=STATUS_COLOR["warning"],
-                           transform=ax_banner.transAxes, va="top")
-        ax_banner.axhline(0.03, color="#DDDDDD", lw=1)
-
-        # --- 各指標パネル ---
-        panel_specs = [("pair", p) for p in pairs] + [("vix", vix_indicator)]
-        for i, (kind, spec) in enumerate(panel_specs):
-            row, col = divmod(i, ncols)
-            ax = fig.add_subplot(gs[row + 1, col])
-            if kind == "pair":
-                plot_pair_panel(ax, spec, pair_dfs[spec["name"]])
-            else:
-                plot_vix_panel(ax, spec, vix_df)
-
         stamp = os.path.basename(find_latest_csv(
             os.path.join(OUTPUT_DIR, "sector_rotation_summary_[0-9]*.csv")
         )).replace("sector_rotation_summary_", "").replace(".csv", "")
+
+        fig = build_dashboard_figure(pairs, vix_indicator, pair_dfs, vix_df,
+                                      regime, regime_color, stress_count, flags, flagged_pairs)
         save_path = os.path.join(OUTPUT_DIR, f"sector_rotation_dashboard_{stamp}.png")
         fig.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
 
+        fig_mobile = build_mobile_dashboard_figure(pairs, vix_indicator, pair_dfs, vix_df,
+                                                     regime, regime_color, stress_count, flags, flagged_pairs)
+        save_path_mobile = os.path.join(OUTPUT_DIR, f"sector_rotation_dashboard_mobile_{stamp}.png")
+        fig_mobile.savefig(save_path_mobile, dpi=150, bbox_inches="tight")
+        plt.close(fig_mobile)
+
         print(f"[完了] ダッシュボードを保存しました: {save_path}")
+        print(f"[完了] モバイル版ダッシュボードを保存しました: {save_path_mobile}")
         print(f"[情報] 総合判定: {regime}")
 
     except Exception as e:

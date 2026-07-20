@@ -106,6 +106,33 @@ exe; it's run standalone and does its own network calls per stock (~30
 `yf.Ticker(...).get_info()` calls for holdings + metrics combined), so it's noticeably
 slower than the other three scripts.
 
+### Desktop vs. mobile chart layouts
+`generate_dashboard.py` and `top_holdings.py` each render **two** PNGs per run, not
+one: the original landscape layout (unchanged filenames, used for PC/exe viewing) and
+a portrait "mobile" layout sized close to a phone's aspect ratio (~0.46 width:height)
+for the companion Android app (`SectorRotationAndroid`, separate repo), which displays
+images via Coil `ContentScale.Fit` with no aspect-ratio assumptions of its own — a
+wide desktop-shaped image left it heavily letterboxed on a phone screen, which is why
+the mobile variant exists. Both layouts call the *same* per-panel drawing functions
+(`plot_pair_panel`/`plot_vix_panel` in `generate_dashboard.py`, `plot_category_panel`
+in `top_holdings.py`) — only the figure/grid construction differs (`build_dashboard_figure`
+vs. `build_mobile_dashboard_figure`; `plot_categories` vs. `plot_categories_mobile`).
+Mobile filenames insert `_mobile_` before the date stamp
+(`sector_rotation_dashboard_mobile_YYYYMMDD.png`,
+`06_sector_rotation_top_holdings_mobile_YYYYMMDD.png`).
+
+**Glob gotcha**: `publish_latest.py` (which copies whichever files it finds into
+`public/latest_dashboard.png`/`public/latest_top_holdings.png` for GitHub Pages) uses
+`_[0-9]*.png` patterns, not a bare `*.png`, specifically so the desktop and mobile
+globs can't match each other's files — `"...dashboard_[0-9]*.png"` doesn't match
+`"...dashboard_mobile_...png"` since `m` isn't a digit. A bare `*` glob would have let
+`sorted()`'s lexicographic ordering silently pick the mobile file as "latest" for the
+desktop pattern once both existed (`m` > any digit). If you add a third layout variant,
+keep this exclusion property. `publish_latest.py` intentionally still resolves the
+desktop-pattern paths (via `find_latest`) even though it only copies the mobile ones —
+that's so a broken desktop-generation step still fails loudly here instead of silently
+publishing stale mobile images forever.
+
 ### Encoding
 Windows PowerShell/cmd default to a non-UTF-8 codepage, which garbles the Japanese
 console output. `console_utf8.py` fixes this (sets console codepage to 65001 +

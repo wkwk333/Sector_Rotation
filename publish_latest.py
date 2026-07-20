@@ -2,8 +2,9 @@
 """
 publish_latest.py
 ==================
-output/ にある最新のダッシュボード画像・代表銘柄画像を、固定ファイル名で
-public/ にコピーし、生成日時とファイル名を記載した latest.json を書き出す。
+output/ にある最新のダッシュボード画像・代表銘柄画像(モバイル版、スマホの
+画面比率に合わせた縦長レイアウト)を、固定ファイル名で public/ にコピーし、
+生成日時とファイル名を記載した latest.json を書き出す。
 
 public/ はGitHub Pagesへそのままアップロードされる想定のディレクトリで、
 Androidアプリ(別リポジトリ)はここに書き出された latest.json を起点に
@@ -48,11 +49,22 @@ def main():
     try:
         os.makedirs(PUBLISH_DIR, exist_ok=True)
 
-        dashboard_src = find_latest(os.path.join(OUTPUT_DIR, "sector_rotation_dashboard_*.png"))
-        top_holdings_src = find_latest(os.path.join(OUTPUT_DIR, "06_sector_rotation_top_holdings_*.png"))
+        # 注意: パターンはプレフィックス直後を数字([0-9])に限定している。
+        # 緩い "*" だと "..._mobile_20260720.png" もマッチしてしまい、かつ
+        # sorted() の辞書順比較で "mobile"(m)が日付(数字)より後ろに並ぶため、
+        # find_latest() がモバイル版をdesktop版として誤って拾ってしまう。
+        dashboard_src = find_latest(os.path.join(OUTPUT_DIR, "sector_rotation_dashboard_[0-9]*.png"))
+        dashboard_mobile_src = find_latest(os.path.join(OUTPUT_DIR, "sector_rotation_dashboard_mobile_[0-9]*.png"))
+        top_holdings_src = find_latest(os.path.join(OUTPUT_DIR, "06_sector_rotation_top_holdings_[0-9]*.png"))
+        top_holdings_mobile_src = find_latest(
+            os.path.join(OUTPUT_DIR, "06_sector_rotation_top_holdings_mobile_[0-9]*.png"))
 
-        shutil.copy2(dashboard_src, os.path.join(PUBLISH_DIR, "latest_dashboard.png"))
-        shutil.copy2(top_holdings_src, os.path.join(PUBLISH_DIR, "latest_top_holdings.png"))
+        # desktop版の存在確認のみ行う (パイプラインのdesktop生成が壊れたら
+        # ここでエラーになり気づける)。実際にpublic/へ配信するのはmobile版。
+        _ = dashboard_src, top_holdings_src
+
+        shutil.copy2(dashboard_mobile_src, os.path.join(PUBLISH_DIR, "latest_dashboard.png"))
+        shutil.copy2(top_holdings_mobile_src, os.path.join(PUBLISH_DIR, "latest_top_holdings.png"))
 
         manifest = {
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -64,8 +76,8 @@ def main():
             json.dump(manifest, f, ensure_ascii=False, indent=2)
 
         print(f"[完了] 公開用ファイルを {PUBLISH_DIR}/ に書き出しました。")
-        print(f"  dashboard: {dashboard_src} -> {PUBLISH_DIR}/latest_dashboard.png")
-        print(f"  top_holdings: {top_holdings_src} -> {PUBLISH_DIR}/latest_top_holdings.png")
+        print(f"  dashboard (mobile): {dashboard_mobile_src} -> {PUBLISH_DIR}/latest_dashboard.png")
+        print(f"  top_holdings (mobile): {top_holdings_mobile_src} -> {PUBLISH_DIR}/latest_top_holdings.png")
         print(f"  manifest: {manifest}")
 
     except Exception as e:

@@ -6,8 +6,13 @@ sector_rotation_dashboard_YYYYMMDD.png の読み方
 generate_dashboard.py を実行すると output/ フォルダに出力されます
 (先に sector_rotation_monitor.py を実行してデータを取得しておく必要があります)。
 
+※ 本ガイドの内容は、Androidアプリ向けの縦長版
+  (sector_rotation_dashboard_mobile_YYYYMMDD.png) にも共通です。
+  6枚のグラフが1列に積まれたレイアウトになるだけで、各パネルの意味・
+  色分け・判定ロジックは横長版(PC/exe向け)とまったく同じです。
 
-1. 全体の構成
+
+1. 全体の構成 (PC/exe向け横長版の場合)
 ----------------
 上段の帯(バナー)に「総合判定」、その下に6枚の小さいグラフが
 2段 x 3列で並んでいます。

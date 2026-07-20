@@ -15,3 +15,6 @@ output/
 
 # GitHub Pages公開用ファイル (CI上でpublish_latest.pyが生成。コミット不要)
 public/
+
+# Claude Codeのローカル設定 (マシン固有、コミット不要)
+.claude/
