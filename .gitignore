@@ -12,3 +12,6 @@ __pycache__/
 
 # 実行結果 (日次CSV・グラフ・ダッシュボード画像。再実行すればいつでも再生成できる)
 output/
+
+# GitHub Pages公開用ファイル (CI上でpublish_latest.pyが生成。コミット不要)
+public/

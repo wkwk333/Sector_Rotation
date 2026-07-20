@@ -1,9 +1,21 @@
 name: Publish dashboard
 
-# Phase 0: manual trigger only for now. Once verified, phase 1 adds a
-# schedule trigger and publishing to GitHub Pages.
+# Runs the pipeline daily after US market close and publishes the latest
+# dashboard/top-holdings images to GitHub Pages for the Android viewer app.
+# Note: fixed UTC time does not auto-adjust for US daylight saving.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 21 * * 1-5"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   run-pipeline:
@@ -34,9 +46,31 @@ jobs:
       - name: Run top holdings (step 4)
         run: python top_holdings.py
 
-      - name: Upload output as artifact
+      - name: Prepare files for publishing
+        run: python publish_latest.py
+
+      - name: Upload full output as artifact (debugging aid)
         uses: actions/upload-artifact@v4
         with:
           name: dashboard-output
           path: output/
           retention-days: 7
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public/
+
+  deploy-pages:
+    needs: run-pipeline
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
