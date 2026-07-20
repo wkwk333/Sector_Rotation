@@ -121,3 +121,30 @@ worked examples) both describe the current `CONFIG["pairs"]` contents and the �
 direction convention above in prose. Any change to basket composition, MA periods, or
 the inflow/outflow direction of a pair should be reflected in both files, not just the
 code.
+
+### CI (GitHub Actions) — `.github/workflows/publish-dashboard.yml`
+Runs the pipeline headlessly on `ubuntu-latest` (personal Android-viewer project, see
+the plan under `~/.claude/plans/` if present — this repo stays Python/CI-only, the
+Android app is a separate repo). Two non-obvious things learned while setting this up:
+- **Comments in the workflow YAML must be ASCII (English), not Japanese.** A workflow
+  file with non-ASCII comment text was pushed successfully, was fetchable via the
+  contents API, and *looked* like valid YAML, but GitHub silently failed to register it
+  as a workflow at all (absent from `gh workflow list`, 404 on dispatch) — no error
+  banner anywhere. Confirmed by bisecting: swapping the Japanese comment for an English
+  one made it register immediately. Root-caused to the comment text specifically, not
+  file size/structure. Keep workflow YAML comments in English even though the rest of
+  the repo is Japanese-first.
+- **`ubuntu-latest` has no Japanese-capable font installed by default** — matplotlib's
+  font-fallback list in `plot_rotation.py`/`generate_dashboard.py`/`top_holdings.py`
+  only lists Windows fonts plus "Noto Sans CJK JP", and without that font actually
+  present, all Japanese chart text renders as tofu boxes (silently — the script exits
+  0, this is only visible by opening the generated image). The workflow installs
+  `fonts-noto-cjk` via apt before running any Python step. If a new workflow/script
+  ever renders charts elsewhere in CI, it needs this too.
+- yfinance's SQLite-based cache can throw a transient `OperationalError('database is
+  locked')` for an individual ticker on a fresh runner (seen for `SPY` on a first run,
+  gone on retry) — `download_prices()`'s existing retry loop does NOT catch this
+  because `yf.download()` doesn't raise, it just returns that ticker as NaN and
+  `sector_rotation_monitor.py` reports it as a normal "[警告] 全期間 NaN" exclusion,
+  which then hard-fails `build_basket` if that ticker was load-bearing for a pair. No
+  code fix applied yet — currently just re-run the workflow if this happens.
