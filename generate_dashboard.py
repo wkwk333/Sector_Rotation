@@ -129,6 +129,8 @@ def compute_regime(pair_data: dict, vix_status: str):
 
     見ている「悪化(ストレス)シグナル」:
       - defensive_tech: ディフェンシブが優位 (資金がテックから逃避)
+                         ※ このペアはレシオ=テック÷ディフェンシブなので、
+                            ディフェンシブ優位は signal == -1 で判定する
       - credit_risk    : IEF(米国債)優位 = 質への逃避 (信用リスク回避)
       - breadth_equalweight: SPY(時価総額加重)優位 = 大型集中・厚みの劣化
       - vix            : 警戒 or パニック的リスクオフ
@@ -136,7 +138,7 @@ def compute_regime(pair_data: dict, vix_status: str):
     3個以上該当 → 広範なリスクオフ / 2個 → 警戒領域 / 0〜1個 → 限定的な動き
     """
     flags = {
-        "ディフェンシブ優位": pair_data["defensive_tech"]["signal"] == 1,
+        "ディフェンシブ優位": pair_data["defensive_tech"]["signal"] == -1,
         "質への逃避 (credit)": pair_data["credit_risk"]["signal"] == -1,
         "大型集中 (breadth)": pair_data["breadth_equalweight"]["signal"] == -1,
         "VIX警戒以上": vix_status != "平常",

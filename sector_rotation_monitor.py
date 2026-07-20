@@ -58,23 +58,25 @@ CONFIG = {
     "pairs": [
         {
             "name": "value_tech",
-            "label": "①バリュー/景気循環 vs テック",
-            "inflow_tickers": ["XLF", "XLI", "XLE"],
-            "outflow_tickers": ["SMH", "IGV"],
+            "label": "①テック vs バリュー/景気循環",
+            # レシオ = テック ÷ バリュー なので、テック優位ほど値が増える
+            "inflow_tickers": ["SMH", "IGV"],
+            "outflow_tickers": ["XLF", "XLI", "XLE"],
             # ダマシ増加を許容し、②と同じ短期MAで判定を速くする
             "ma_short": 10,
             "ma_long": 30,
-            "signal_labels": {1: "バリュー優位", -1: "テック優位"},
+            "signal_labels": {1: "テック優位", -1: "バリュー優位"},
         },
         {
             "name": "defensive_tech",
-            "label": "②ディフェンシブ vs テック",
-            "inflow_tickers": ["XLP", "XLU", "XLV"],
-            "outflow_tickers": ["XLK", "SMH", "IGV"],
+            "label": "②テック vs ディフェンシブ",
+            # レシオ = テック ÷ ディフェンシブ なので、テック優位ほど値が増える
+            "inflow_tickers": ["XLK", "SMH", "IGV"],
+            "outflow_tickers": ["XLP", "XLU", "XLV"],
             # 直近の動きは数週間と短いため短期MAを採用
             "ma_short": 10,
             "ma_long": 30,
-            "signal_labels": {1: "ディフェンシブ優位", -1: "テック優位"},
+            "signal_labels": {1: "テック優位", -1: "ディフェンシブ優位"},
         },
         {
             "name": "breadth_smallcap",
