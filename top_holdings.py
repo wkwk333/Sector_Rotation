@@ -14,18 +14,32 @@ top_holdings.py
 ETFごとの保有比率を均等加重平均し、その値で再ランキングします
 (価格バスケットを等ウェイト平均する既存ロジックと考え方を統一)。
 
-各銘柄には割安度の目安として実績PER(trailingPE。取得できない場合は
-予想PERで代替)を併記し、同じカテゴリ内の中央値と比較した相対位置
-(中央値より安ければ「割安」、高ければ「割高」)を色分け表示します。
+各銘柄の割安度は、単一指標(PERのみ)の弱点(成長性を無視する、赤字企業で
+使えない、資本構成の違いを無視する等)を補うため、以下5指標を組み合わせた
+「総合割安度スコア」で判定します (VALUATION_METRICS 参照)。
+
+  - PER (実績優先、無ければ予想)        … 低いほど割安
+  - PEGレシオ (PER ÷ 利益成長率)        … 低いほど割安。成長性で正規化
+  - PBR (株価純資産倍率)                … 低いほど割安。金融・資本財向け
+  - EV/EBITDA                           … 低いほど割安。資本構成の歪みを除去
+  - 配当利回り                          … 高いほど割安 (株主還元の厚さ)
+  - FCF利回り (FCF ÷ 時価総額)          … 高いほど割安。会計操作されにくい
+
+各指標をカテゴリ内でパーセンタイル順位化し(スケールの違う指標を単純平均
+できないため)、「安い方」を100点・「高い方」を0点として指標間で平均した
+ものが総合割安度スコアです。データが取得できない指標は平均から除外され、
+使用できた指標数を併記します。スコア66.7点以上=割安、33.3点以下=割高、
+その他=中立と判定します。
 
 制約:
 - 各ETFについて取得できるのは概ね上位10銘柄までのため、
   あるETFでは上位に入らない(≒比率0として扱われる)銘柄がある点に注意してください。
   厳密な保有比率ではなく「現在の代表的な物色対象」を把握するための参考情報です。
-- 割安度はあくまで「同じカテゴリ内の他銘柄と比べたPERの相対位置」であり、
-  成長性・収益性・業種特性の違いを考慮した本来の割安度(フェアバリュー)
-  ではありません。参考情報としてご利用ください。
-- 赤字企業などPERが算出できない銘柄は「PER: N/A」と表示されます。
+- あくまで「同じカテゴリ内の他銘柄と比べた相対位置」であり、本来のフェア
+  バリュー(理論株価)ではありません。参考情報としてご利用ください。
+- PBR がマイナス(債務超過等で株主資本がマイナス)、PER/PEG/EV-EBITDA が
+  マイナスの銘柄は、その指標を「割安判定不能」として除外します
+  (マイナス値は小さいほど割安、という単純比較ができないため)。
 
 実行方法:
     python top_holdings.py
@@ -60,13 +74,24 @@ OUTPUT_DIR = CONFIG["output_dir"]
 TOP_N = 10
 MAX_RETRIES = 3
 RETRY_WAIT_SEC = 5
-CHEAP_THRESHOLD_PCT = -10.0   # カテゴリ中央値よりこの%以上安ければ「割安」
-EXPENSIVE_THRESHOLD_PCT = 10.0  # カテゴリ中央値よりこの%以上高ければ「割高」
+CHEAP_SCORE_THRESHOLD = 66.7    # 総合割安度スコアがこれ以上なら「割安」
+EXPENSIVE_SCORE_THRESHOLD = 33.3  # これ以下なら「割高」
+MIN_METRICS_REQUIRED = 2       # 有効指標がこの数未満なら「判定不能」扱い
 
 COLOR_CHEAP = "#2E8B4F"      # 割安: 緑
 COLOR_EXPENSIVE = "#B23A48"  # 割高: 赤
 COLOR_NEUTRAL_VAL = "#8A7A1F"  # 中立: 琥珀寄りのグレー
-COLOR_NA = "#999999"         # PER取得不可: グレー
+COLOR_NA = "#999999"         # 判定不能: グレー
+
+# --- 割安度を構成する指標 (方向: "low"=低いほど割安 / "high"=高いほど割安) ---
+VALUATION_METRICS = [
+    {"key": "per", "label": "PER", "direction": "low", "fmt": "{:.1f}倍"},
+    {"key": "peg", "label": "PEG", "direction": "low", "fmt": "{:.2f}"},
+    {"key": "pbr", "label": "PBR", "direction": "low", "fmt": "{:.1f}倍"},
+    {"key": "ev_ebitda", "label": "EV/EB", "direction": "low", "fmt": "{:.1f}倍"},
+    {"key": "div_yield", "label": "配当", "direction": "high", "fmt": "{:.1f}%"},
+    {"key": "fcf_yield", "label": "FCF", "direction": "high", "fmt": "{:.1f}%"},
+]
 
 # --- 日本語フォントの自動選択 (文字化け対策) ---
 _JP_FONT_CANDIDATES = ["Yu Gothic", "Meiryo", "MS Gothic", "Noto Sans CJK JP"]
@@ -119,56 +144,97 @@ def fetch_top_holdings(ticker: str) -> pd.DataFrame:
     return pd.DataFrame(columns=["Symbol", "Name", "Weight"])
 
 
-def fetch_pe(symbol: str):
+def fetch_metrics(symbol: str) -> dict:
     """
-    銘柄の実績PER(trailingPE)を取得する。取得できなければ予想PER(forwardPE)で
-    代替する。どちらも無ければ None を返す(赤字企業など)。
+    銘柄の割安度判定に使う生指標 (PER/PEG/PBR/EV/EBITDA/配当利回り/FCF利回り) を取得する。
+    符号がおかしく比較不能な値 (マイナスのPER/PEG/PBR/EV-EBITDA) は None にする。
+    取得失敗時はリトライし、最終的に全指標 None の dict を返して処理は継続させる。
     """
     last_err = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             info = yf.Ticker(symbol).get_info()
-            pe = info.get("trailingPE")
-            if pe is None or pe <= 0:
-                pe = info.get("forwardPE")
-            if pe is not None and pe <= 0:
-                pe = None
-            return pe
+
+            per = info.get("trailingPE") or info.get("forwardPE")
+            peg = info.get("pegRatio") or info.get("trailingPegRatio")
+            pbr = info.get("priceToBook")
+            ev_ebitda = info.get("enterpriseToEbitda")
+            div_yield = info.get("dividendYield")  # 既に%表記 (例 2.8 = 2.8%)
+
+            market_cap = info.get("marketCap")
+            fcf = info.get("freeCashflow")
+            fcf_yield = (fcf / market_cap * 100) if (fcf is not None and market_cap) else None
+
+            def positive_or_none(v):
+                return v if (v is not None and v > 0) else None
+
+            return {
+                "per": positive_or_none(per),
+                "peg": positive_or_none(peg),
+                "pbr": positive_or_none(pbr),
+                "ev_ebitda": positive_or_none(ev_ebitda),
+                "div_yield": div_yield if div_yield is not None else None,
+                "fcf_yield": fcf_yield,
+            }
         except Exception as e:
             last_err = e
-            print(f"[警告] {symbol} のPER取得に失敗 (試行 {attempt}/{MAX_RETRIES}): {e}")
+            print(f"[警告] {symbol} の指標取得に失敗 (試行 {attempt}/{MAX_RETRIES}): {e}")
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_WAIT_SEC)
-    print(f"[警告] [エラー発生源: fetch_pe({symbol})] "
+    print(f"[警告] [エラー発生源: fetch_metrics({symbol})] "
           f"{MAX_RETRIES}回の試行後も取得できませんでした。最終エラー: {last_err}")
-    return None
+    return {m["key"]: None for m in VALUATION_METRICS}
 
 
 def add_valuation(df: pd.DataFrame) -> pd.DataFrame:
     """
-    各銘柄にPERと、カテゴリ内中央値との相対評価(割安/割高/中立/N/A)を付与する。
+    各銘柄に複数指標を取得し、カテゴリ内パーセンタイル順位を指標間で
+    平均した「総合割安度スコア (0-100、高いほど割安)」を付与する。
     """
     df = df.copy()
-    df["PE"] = [fetch_pe(sym) for sym in df["Symbol"]]
+    metrics = [fetch_metrics(sym) for sym in df["Symbol"]]
+    for m in VALUATION_METRICS:
+        df[m["key"]] = [row[m["key"]] for row in metrics]
 
-    valid_pe = df["PE"].dropna()
-    median_pe = valid_pe.median() if not valid_pe.empty else None
+    # --- 指標ごとにカテゴリ内パーセンタイル順位 (0-1, 高いほど割安) を計算 ---
+    cheapness_cols = []
+    for m in VALUATION_METRICS:
+        col = m["key"]
+        pct_rank = df[col].rank(pct=True, ascending=True)  # 生値が大きいほど1.0に近い
+        cheapness = pct_rank if m["direction"] == "high" else (1.0 - pct_rank)
+        df[f"{col}_cheapness"] = cheapness
+        cheapness_cols.append(f"{col}_cheapness")
 
-    def classify(pe):
-        if pe is None or pd.isna(pe) or median_pe is None:
-            return None, "PER: N/A", COLOR_NA
-        rel_pct = (pe - median_pe) / median_pe * 100
-        if rel_pct <= CHEAP_THRESHOLD_PCT:
-            return rel_pct, f"PER {pe:.1f}倍 (割安・中央値比{rel_pct:+.0f}%)", COLOR_CHEAP
-        if rel_pct >= EXPENSIVE_THRESHOLD_PCT:
-            return rel_pct, f"PER {pe:.1f}倍 (割高・中央値比{rel_pct:+.0f}%)", COLOR_EXPENSIVE
-        return rel_pct, f"PER {pe:.1f}倍 (中立・中央値比{rel_pct:+.0f}%)", COLOR_NEUTRAL_VAL
+    df["score"] = df[cheapness_cols].mean(axis=1, skipna=True) * 100
+    df["n_metrics"] = df[cheapness_cols].notna().sum(axis=1)
 
-    classified = [classify(pe) for pe in df["PE"]]
-    df["RelPct"] = [c[0] for c in classified]
-    df["ValuationText"] = [c[1] for c in classified]
-    df["ValuationColor"] = [c[2] for c in classified]
-    return df, median_pe
+    def classify(row):
+        score, n = row["score"], row["n_metrics"]
+        if pd.isna(score) or n < MIN_METRICS_REQUIRED:
+            return f"総合判定不能 ({int(n)}/{len(VALUATION_METRICS)}指標)", COLOR_NA
+        if score >= CHEAP_SCORE_THRESHOLD:
+            return f"割安 ({score:.0f}点・{int(n)}/{len(VALUATION_METRICS)}指標)", COLOR_CHEAP
+        if score <= EXPENSIVE_SCORE_THRESHOLD:
+            return f"割高 ({score:.0f}点・{int(n)}/{len(VALUATION_METRICS)}指標)", COLOR_EXPENSIVE
+        return f"中立 ({score:.0f}点・{int(n)}/{len(VALUATION_METRICS)}指標)", COLOR_NEUTRAL_VAL
+
+    classified = df.apply(classify, axis=1)
+    df["ValuationText"] = [c[0] for c in classified]
+    df["ValuationColor"] = [c[1] for c in classified]
+
+    # 主要指標の内訳テキスト (取得できたものだけ、チャートの補足行に使う)
+    def detail_text(row):
+        parts = []
+        for m in VALUATION_METRICS:
+            v = row[m["key"]]
+            if pd.notna(v):
+                parts.append(f"{m['label']}{m['fmt'].format(v)}")
+        return "  ".join(parts) if parts else "指標取得不可"
+
+    df["DetailText"] = df.apply(detail_text, axis=1)
+
+    median_score = df["score"].median() if df["score"].notna().any() else None
+    return df, median_score
 
 
 def aggregate_category(tickers: list) -> pd.DataFrame:
@@ -215,16 +281,18 @@ def plot_categories(category_data: list, stamp: str) -> str:
         ax.barh(y_pos, df["Weight"] * 100, color=cat["color"], height=0.65)
 
         for y, (_, row) in zip(y_pos, df.iterrows()):
-            ax.text(row["Weight"] * 100 + 0.3, y + 0.16, f"{row['Name']}  ({row['Weight']*100:.1f}%)",
+            ax.text(row["Weight"] * 100 + 0.3, y + 0.20, f"{row['Name']}  ({row['Weight']*100:.1f}%)",
                     va="center", fontsize=8.5, color="#333333")
-            ax.text(row["Weight"] * 100 + 0.3, y - 0.20, row["ValuationText"],
+            ax.text(row["Weight"] * 100 + 0.3, y - 0.05, row["ValuationText"],
                     va="center", fontsize=7.8, color=row["ValuationColor"], weight="bold")
+            ax.text(row["Weight"] * 100 + 0.3, y - 0.30, row["DetailText"],
+                    va="center", fontsize=6.5, color="#999999")
 
         ax.set_yticks(list(y_pos))
         ax.set_yticklabels(df["Symbol"], fontsize=10, weight="bold")
-        ax.set_xlim(0, max(df["Weight"] * 100) * 2.1)
-        median_pe = cat.get("median_pe")
-        median_text = f"category PER中央値: {median_pe:.1f}倍" if median_pe else "category PER中央値: 算出不可"
+        ax.set_xlim(0, max(df["Weight"] * 100) * 3.1)
+        median_score = cat.get("median_score")
+        median_text = f"総合割安度スコア中央値: {median_score:.0f}点" if median_score is not None else "総合割安度スコア中央値: 算出不可"
         ax.set_title(f"{cat['label']}\n({'+'.join(cat['tickers'])})  {median_text}",
                      fontsize=12.5, color=cat["color"], loc="left")
         ax.spines[["top", "right", "left"]].set_visible(False)
@@ -232,10 +300,12 @@ def plot_categories(category_data: list, stamp: str) -> str:
         ax.grid(True, axis="x", color="#EEEEEE", lw=0.6)
 
     fig.suptitle(f"米国株 カテゴリ別 代表銘柄 (上位{TOP_N}銘柄) — データ基準日: {stamp}", fontsize=15, y=1.03)
-    fig.text(0.0, -0.05,
+    fig.text(0.0, -0.06,
              "※ 保有比率は各ETFの上位保有銘柄(概ね上位10銘柄)をETF間で均等加重平均して再ランキングしたものです。\n"
-             "※ 割安度は実績PER(取得不可の場合は予想PER)をカテゴリ内中央値と比較した相対位置であり、"
-             "成長性等を考慮した本来のフェアバリューではありません。緑=割安 / 琥珀=中立 / 赤=割高 / 灰=PER取得不可。",
+             "※ 総合割安度スコアはPER・PEG・PBR・EV/EBITDA・配当利回り・FCF利回りをカテゴリ内でパーセンタイル順位化し"
+             "平均したもの(0-100、高いほど割安)。66.7点以上=割安 / 33.3点以下=割高。取得できた指標数が少ないほど参考程度に。\n"
+             "※ 本来のフェアバリュー(理論株価)ではなく、あくまで同カテゴリ内の他銘柄との相対比較です。"
+             "緑=割安 / 琥珀=中立 / 赤=割高 / 灰=判定不能。",
              fontsize=8, color="#777777")
 
     save_path = os.path.join(OUTPUT_DIR, f"06_sector_rotation_top_holdings_{stamp}.png")
@@ -253,9 +323,10 @@ def main():
         for cat in CATEGORIES:
             print(f"[情報] {cat['label']} ({'+'.join(cat['tickers'])}) の保有銘柄を取得中...")
             holdings = aggregate_category(cat["tickers"])
-            print(f"  PERを取得中... ({', '.join(holdings['Symbol'])})")
-            holdings, median_pe = add_valuation(holdings)
-            category_data.append({**cat, "holdings": holdings, "median_pe": median_pe})
+            print(f"  割安度指標(PER/PEG/PBR/EV-EBITDA/配当利回り/FCF利回り)を取得中... "
+                  f"({', '.join(holdings['Symbol'])})")
+            holdings, median_score = add_valuation(holdings)
+            category_data.append({**cat, "holdings": holdings, "median_score": median_score})
             top3 = ", ".join(f"{r.Symbol}({r.Weight*100:.1f}%, {r.ValuationText})"
                              for r in holdings.head(3).itertuples())
             print(f"  上位3銘柄: {top3}")

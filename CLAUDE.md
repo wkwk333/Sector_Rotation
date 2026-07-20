@@ -93,10 +93,17 @@ browser; the dashboard PNG is deliberately *not* numbered. If a new pair is adde
 Pulls each category's ETF top-10 holdings via `yfinance.Ticker(t).funds_data.top_holdings`
 (no relation to the price-based CSVs) and equal-weights across a category's constituent
 ETFs when a stock appears in more than one. Valuation coloring (cheap/neutral/expensive)
-is trailing-P/E (falls back to forward P/E) compared to the *category's own median P/E*
-that run — it is a relative/peer comparison, not a fair-value estimate. This script is
-not part of `run_pipeline.py` / the exe; it's run standalone and does its own
-network calls per stock (~30 `yf.Ticker(...).get_info()` calls), so it's noticeably
+is a **composite score**, not a single ratio: `VALUATION_METRICS` (PER, PEG, PBR,
+EV/EBITDA, dividend yield, FCF yield) are each converted to a category-relative
+percentile rank ("cheapness", 0-1, direction-aware — see each metric's `"direction"`)
+and averaged into a 0-100 score (`add_valuation()`); ≥66.7 = 割安, ≤33.3 = 割高, and a
+stock needs at least `MIN_METRICS_REQUIRED` valid metrics or it's reported as
+判定不能. This is a peer/category-relative read, not a fair-value estimate — a stock
+can score "cheap" simply because the rest of its category is even more expensive.
+Negative PER/PEG/PBR/EV-EBITDA (e.g. negative book value) are treated as unusable for
+that metric, not as "very cheap". This script is not part of `run_pipeline.py` / the
+exe; it's run standalone and does its own network calls per stock (~30
+`yf.Ticker(...).get_info()` calls for holdings + metrics combined), so it's noticeably
 slower than the other three scripts.
 
 ### Encoding
