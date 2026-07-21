@@ -9,7 +9,7 @@ on:
     - cron: "0 21 * * 1-5"
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -48,6 +48,24 @@ jobs:
 
       - name: Prepare files for publishing
         run: python publish_latest.py
+
+      # GitHub auto-disables scheduled workflows in a public repo after 60 days
+      # with no new commits -- a successful workflow RUN does not count as
+      # activity by itself, only an actual commit does (confirmed via GitHub
+      # community discussions; there's no in-app warning when this happens).
+      # This repo's public/ output is gitignored and nothing else here commits
+      # automatically, so without this step the schedule would silently stop
+      # firing ~60 days after the last manual commit. Writing a timestamp file
+      # every run keeps that 60-day clock permanently reset.
+      - name: Keep scheduled workflow alive (commit a run timestamp)
+        run: |
+          mkdir -p .github
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/last-run.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/last-run.txt
+          git diff --cached --quiet && echo "No change to commit" || git commit -m "Keepalive: record workflow run $(date -u +%Y-%m-%d)"
+          git push
 
       - name: Upload full output as artifact (debugging aid)
         uses: actions/upload-artifact@v4
