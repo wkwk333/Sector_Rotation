@@ -175,3 +175,16 @@ Android app is a separate repo). Two non-obvious things learned while setting th
   `sector_rotation_monitor.py` reports it as a normal "[警告] 全期間 NaN" exclusion,
   which then hard-fails `build_basket` if that ticker was load-bearing for a pair. No
   code fix applied yet — currently just re-run the workflow if this happens.
+- **GitHub silently auto-disables a public repo's scheduled workflow after 60 days
+  with no new commits.** Confirmed (via GitHub community discussions, while setting up
+  the sibling `Sector_Rotation_RRG` repo) that a successful scheduled *run* does NOT
+  count as activity by itself — only an actual commit does — and there is no in-app
+  warning banner when the schedule gets disabled, just an easy-to-miss one-time email.
+  This repo's `public/` output is gitignored and the workflow used to have
+  `permissions: contents: read`, so nothing here was ever resetting that 60-day clock
+  on its own. Fixed by adding a "Keep scheduled workflow alive" step that writes the
+  current UTC time to `.github/last-run.txt` and commits it every run (permissions
+  bumped to `contents: write` to allow the push) — verified via a manual
+  `workflow_dispatch` run that the commit actually lands on `origin/master`. If this
+  step or the write permission is ever removed, the schedule will start silently
+  counting down to auto-disable again.
